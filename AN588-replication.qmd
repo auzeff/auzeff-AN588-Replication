@@ -1,0 +1,151 @@
+---
+title: "AN 588 Replication Project"
+format: html
+editor: visual
+---
+
+The article I will be replicating is called "Interspecific and Intrashell Stable Isotope Variation Among the Red Sea Giant Clams" (Killam et al. 2020). As the title suggests, it focuses on several species of giant clam found in the Gulf of Aqaba in the Red Sea (specifically *Tridacna maxima*, *T. squamosa*, and *T. squamosina.*). The article uses carbon and oxygen isotope ratios in the shells of the clams as proxies for temperature and light levels in their habitats. The ratio of ^18^O is impacted by temperature. Giant clams contain photosynthetic algae in their tissue; it has been proposed that these symbionts may affect the ratio of δ^13^C in their shells. If so, then this ratio would reflect the level of photosynthetic activity in the clams' habitats. The shells consist of an inner and outer layer, which are exposed to differing conditions and thus may contain different isotope ratios.
+
+The article uses a dataset consisting of modern shells taken directly from the Gulf or museum collections as well as fossilized shells from uplifted reefs. Shell species, location, age, dimensions, and isotope ratios by layer were recorded. Temperature at formation was calculated from the oxygen isotope ratios using existing equations. Analyses were then conducted on these data to look for significant differences in isotope ratios and calculated temperatures; these include a paired Wilcoxon signed rank test, means and standard deviations by layer and species, one-way ANOVAs, and a post hoc Tukey test on one ANOVA. I will be replicating all analyses except for the Wilcoxon test, and will be recreating a set of boxplots comparing temperature and δ^13^C between shell layers across all three species.
+
+Article: <https://doi.org/10.1029/2019GC008669>
+
+Data: <https://doi.org/10.7291/D13377>
+
+------------------------------------------------------------------------
+
+## Preparation
+
+```{r}
+# Loading all required packages
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+# Importing datasets
+d <- read_csv("Replication_data.csv")
+head(d)
+```
+
+------------------------------------------------------------------------
+
+## Means & SDs
+
+```{r}
+# Adding temperature to my dataset
+d18O_sw <- 1.53 # this is the seawater d18O value--see the article for an explanation of the specific value
+
+d <- d %>% mutate(temperature = 20.19 - 4.56 * (d18O - 1.53) + 0.19 * (d18O - 1.53)) # equation taken from the article
+
+# Making separate datasets for outer and inner shell layers
+d_outer <- d[d$layer %in% "outer", ]
+d_inner <- d[d$layer %in% "inner", ]
+
+# A quick function to run the mean and SD tests together
+tests <- function(x) {
+  tibble(mean = mean(x), sd = sd(x))
+}
+
+# Setting up my variable names
+vars <- c("d13C", "d18O", "temperature") 
+
+# Creating my row names and assigning them data subsets
+rows <- list("Outer, all specimens" = d_outer, 
+             "Inner, all specimens" = d_inner, 
+             "Outer, T. squamosina" = d_outer[d_outer$species %in% "squamosina", ], 
+             "Inner, T. squamosina" = d_inner[d_inner$species %in% "squamosina", ], 
+             "Outer, T. squamosa" = d_outer[d_outer$species %in% "squamosa", ], 
+             "Inner, T. squamosa" = d_inner[d_inner$species %in% "squamosa", ], 
+             "Outer, T. maxima" = d_outer[d_outer$species %in% "maxima", ], 
+             "Inner, T. maxima" = d_inner[d_inner$species %in% "maxima", ])
+
+# This function runs the test for each of my rows defined above and then compiles them into a single table.
+table_1 <- map_dfr(names(rows), function(row) {
+  df <- rows[[row]]  # Select dataset
+
+  map_dfr(vars, function(var) {
+    tests(df[[var]]) %>% 
+      mutate(variable = var, dataset = row, length = nrow(df))  # Add variable & row names
+  })
+})
+
+
+# Reordering the columns in my table to match those in the article
+table_1 <- table_1 %>%
+  select(dataset, length, variable, mean, sd)
+
+table_1
+```
+
+#### Original:
+
+![](Replication_Table1.png){width="640"}
+
+\<img src="img/Replication_Table1.png" width="200px"/\>
+
+------------------------------------------------------------------------
+
+## ANOVA and Tukey
+
+```{r}
+# In order to compare the species, I need to remove the observations that are an undetermined species
+d_outer <- d_outer %>% filter(species != "undet")
+
+# The first ANOVA is for the reconstructed temperature of the outer shell layer between species.
+aov_temp <- aov(temperature ~ species, data = d_outer)
+summary(aov_temp)
+```
+
+```{r}
+# Next, we do a post hoc Tukey test to better understand where the difference in the ANOVA above is coming from.
+TukeyHSD(aov_temp)
+```
+
+```{r}
+# Finally, we conduct an ANOVA for the d13C values of the outer shell layer between species.
+aov_d13C <- aov(d13C ~ species, data = d_outer)
+summary(aov_d13C)
+```
+
+------------------------------------------------------------------------
+
+## Boxplots
+
+```{r}
+#| message: false
+#| fig-height: 9
+#| fig-width: 6
+# Adjusting height and width of the output
+
+# Removing undetermined species
+d <- d %>% filter(species != "undet")
+
+# Making a function for the boxplots
+boxplots <- function(y, ylab) {
+  bp <- ggplot(d, aes(x = species, y = y, color = layer))
+  bp <- bp + geom_boxplot(fill = NA, size = 0.8)
+  bp <- bp + geom_dotplot(aes(x = species, y = y, fill = layer), binaxis = "y", dotsize = 0.8, stackdir = "center", position = position_dodge(width = 0.75)) # adding all sample dots to the boxplot
+  bp <- bp + labs(x = NULL, y = ylab) # matching axis labels (or lack thereof) to article
+  bp <- bp + theme_bw() # this theme is more similar to what they used
+  bp <- bp + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # removing gridlines to match the look
+  bp <- bp + theme(axis.text.x = element_text(face = "italic")) # italicizing x axis labels like in the figure
+  bp <- bp + theme(axis.title.x = element_text(size = 16), axis.title.y = element_text(size = 16), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12), legend.text = element_text(size = 12), legend.key.size = unit(1, "cm")) # adjusting sizes for axis titles, labels, and legend
+  bp <- bp + theme(legend.position = "bottom", legend.title = element_blank()) # moving the legend to the bottom and removing its title
+  bp <- bp + theme(panel.border = element_blank(), axis.line.x = element_line(color = "black"), axis.line.y = element_line(color = "black")) # reformatting borders to be more in line (pun intended) with the figure
+  bp <- bp + scale_color_manual(values = c("outer" = "turquoise", "inner" = "indianred1")) # matching colors
+}
+
+bp <- boxplots(d$temperature, "Temperature (°C)")
+bp2 <- boxplots(d$d13C, "δ13C (‰)")
+
+# Arranging the boxplots into a vertical grid as in the article
+grid.arrange(bp, bp2, ncol = 1)
+```
+
+#### Original:
+
+![](Replication_Figure4.png){width="561"}
+
+\<img src="img/Replication_Figure4.png" width="200px"/\>
